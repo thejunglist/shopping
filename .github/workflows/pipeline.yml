@@ -1,0 +1,86 @@
+name: Pipeline
+
+# `test` runs on GitHub-hosted runners for every pull request (including forks)
+# and every push to main. `deploy` runs only for pushes to main, on the
+# self-hosted runner inside the home-server container. Pull requests never
+# reach that runner. See docs/deployment.md.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix server --ignore-scripts
+          npm ci --prefix web
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test server
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high --prefix server
+          npm audit --omit=dev --audit-level=high --prefix web
+
+      - name: Bundle release
+        if: github.event_name == 'push'
+        run: bash deploy/bundle.sh "$GITHUB_SHA" release.tar.gz
+
+      - name: Upload release bundle
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, shopping]
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      # Needed only for deploy/deploy.sh; the app itself comes from the bundle.
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
+      - name: Deploy
+        run: bash deploy/deploy.sh "$GITHUB_SHA" release.tar.gz

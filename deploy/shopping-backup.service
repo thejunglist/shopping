@@ -1,0 +1,8 @@
+[Unit]
+Description=Nightly backup of the shopping database
+
+[Service]
+Type=oneshot
+User=shopping
+Group=shopping
+ExecStart=/usr/local/bin/shopping-backup nightly

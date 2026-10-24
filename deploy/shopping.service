@@ -1,0 +1,24 @@
+[Unit]
+Description=Shopping list app
+After=network.target
+
+[Service]
+Type=simple
+User=shopping
+Group=shopping
+WorkingDirectory=/opt/shopping/current/server
+ExecStart=/usr/bin/node src/index.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=DB_PATH=/var/lib/shopping/shopping.db
+Restart=on-failure
+RestartSec=3
+
+# Light hardening that works in an unprivileged LXC. If you enable "nesting" on
+# the container you can add ProtectSystem=strict, ReadWritePaths=/var/lib/shopping,
+# ProtectHome=true and PrivateTmp=true.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

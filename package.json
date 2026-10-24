@@ -1,0 +1,25 @@
+{
+  "name": "shopping",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Weekly shopping list app: per-store prices, categories, budgets. Self-hosted behind Tailscale.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "install:all": "npm ci && npm ci --prefix server --ignore-scripts && npm ci --prefix web",
+    "dev:server": "npm run dev --prefix server",
+    "dev:web": "npm run dev --prefix web",
+    "lint": "eslint .",
+    "test": "npm test --prefix server",
+    "build": "npm run build --prefix web",
+    "check": "npm run lint && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "eslint-plugin-vue": "^10.11.1",
+    "globals": "^17.13.0"
+  }
+}

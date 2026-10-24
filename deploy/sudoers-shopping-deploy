@@ -1,0 +1,4 @@
+# Installed to /etc/sudoers.d/shopping-deploy by deploy/setup.sh.
+# The CI runner user may do exactly two things as another user, nothing else.
+runner ALL=(root) NOPASSWD: /usr/bin/systemctl restart shopping
+runner ALL=(shopping) NOPASSWD: /usr/local/bin/shopping-backup *
