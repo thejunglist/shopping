@@ -31,7 +31,10 @@ release="$root/releases/$version"
 # made the old rollback "restore" a release called "current".
 previous=""
 if [[ -L "$root/current" ]]; then
-  previous="$(readlink -f "$root/current")"
+  # A dangling or looping link (an older failed deploy could leave one) makes
+  # readlink fail; treat that as "no previous release" rather than aborting.
+  previous="$(readlink -f "$root/current" 2>/dev/null || true)"
+  [[ -d "$previous" && "$previous" != "$root/current" ]] || previous=""
 fi
 # Redeploying the release that is already live: there is nothing older to fall back to.
 if [[ "$previous" == "$release" ]]; then previous=""; fi
