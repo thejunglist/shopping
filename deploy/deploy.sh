@@ -26,7 +26,18 @@ release="$root/releases/$version"
 [[ "$version" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad version: $version" >&2; exit 1; }
 [[ -f "$bundle" ]] || { echo "bundle not found: $bundle" >&2; exit 1; }
 
-previous="$(readlink -f "$root/current" 2>/dev/null || true)"
+# The release that is live now, if any. Not `readlink -f` on its own: for a path
+# that does not exist yet (the first deploy) it prints the path and succeeds, which
+# made the old rollback "restore" a release called "current".
+previous=""
+if [[ -L "$root/current" ]]; then
+  # A dangling or looping link (an older failed deploy could leave one) makes
+  # readlink fail; treat that as "no previous release" rather than aborting.
+  previous="$(readlink -f "$root/current" 2>/dev/null || true)"
+  [[ -d "$previous" && "$previous" != "$root/current" ]] || previous=""
+fi
+# Redeploying the release that is already live: there is nothing older to fall back to.
+if [[ "$previous" == "$release" ]]; then previous=""; fi
 
 echo "==> Backing up the database"
 sudo -n -u shopping /usr/local/bin/shopping-backup "pre-deploy-$version"
@@ -35,6 +46,9 @@ echo "==> Unpacking $version"
 rm -rf "$release"
 mkdir -p "$release"
 tar -xzf "$bundle" -C "$release"
+# The `shopping` service user must be able to enter this directory. Bundles built
+# by older versions of bundle.sh carried mode 700 for it, so set it explicitly.
+chmod 755 "$release"
 
 echo "==> Installing production dependencies"
 # --ignore-scripts: better-sqlite3 ships prebuilt binaries for linux x64/arm64,
@@ -47,6 +61,16 @@ switch_to() {
   ln -sfn "$1" "$root/current.new"
   mv -Tf "$root/current.new" "$root/current"
   sudo -n /usr/bin/systemctl restart shopping
+}
+
+# Show why a release did not come up. `systemctl status` needs no privileges; the
+# journal is read through the one sudo rule in deploy/sudoers-shopping-deploy.
+diagnose() {
+  echo "---- systemctl status shopping" >&2
+  systemctl status shopping --no-pager --lines=0 >&2 2>&1 || true
+  echo "---- journalctl -u shopping (last 40 lines)" >&2
+  sudo -n /usr/bin/journalctl -u shopping -n 40 --no-pager >&2 2>&1 \
+    || echo "(could not read the journal here; on the server run: journalctl -u shopping -n 50)" >&2
 }
 
 healthy() {
@@ -68,7 +92,7 @@ switch_to "$release"
 echo "==> Checking /healthz"
 if ! healthy "$version"; then
   echo "Health check failed for $version" >&2
-  journalctl -u shopping -n 40 --no-pager 2>/dev/null || true
+  diagnose
   if [[ -n "$previous" && -d "$previous" ]]; then
     echo "==> Rolling back to $(basename "$previous")" >&2
     switch_to "$previous"
@@ -78,7 +102,10 @@ if ! healthy "$version"; then
       echo "Rollback health check also failed. Manual intervention needed." >&2
     fi
   else
-    echo "No previous release to roll back to." >&2
+    # First deploy: nothing to go back to. Drop the link so the next deploy
+    # starts clean instead of treating this broken release as the previous one.
+    rm -f "$root/current"
+    echo "No previous release to roll back to. The failed release is kept at $release for inspection." >&2
   fi
   exit 1
 fi
