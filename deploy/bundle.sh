@@ -31,5 +31,9 @@ cp "$root/server/package.json" "$root/server/package-lock.json" "$stage/server/"
 cp -r "$root/web/dist/." "$stage/public/"
 printf '%s\n' "$version" > "$stage/VERSION"
 
+# mktemp -d creates the directory as 0700 and tar records that for ".", so
+# extracting the bundle as the runner user would leave the release directory
+# unreadable by the `shopping` service user. Make it traversable first.
+chmod 755 "$stage"
 tar -C "$stage" -czf "$out" .
 echo "wrote $out (version $version)"
