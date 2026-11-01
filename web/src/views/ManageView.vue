@@ -34,6 +34,7 @@ onMounted(async () => {
   <h1>Manage</h1>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
 
+
   <ManageList
     title="Shops"
     noun="shop"
@@ -42,6 +43,7 @@ onMounted(async () => {
     hint="Lists are grouped by shop, in this order."
     @changed="load"
   />
+
   <ManageList
     title="Categories"
     noun="category"
@@ -52,7 +54,7 @@ onMounted(async () => {
   />
 
   <section>
-    <h2>About</h2>
+    <h2>ATest</h2>
     <dl class="card about">
       <dt>Signed in as</dt>
       <dd>{{ user ?? 'unknown (not via Tailscale)' }}</dd>

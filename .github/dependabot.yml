@@ -17,6 +17,11 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    groups:
+      # The WebAssembly file must match the code that loads it, so these two
+      # are always updated in the same pull request.
+      barcode-reader:
+        patterns: ['barcode-detector', 'zxing-wasm']
 
   - package-ecosystem: github-actions
     directory: /

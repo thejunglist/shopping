@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { normalizeEan } from '../barcode.js';
 import { id, notFound, pence, setClause } from '../http.js';
+import { setManualPrice } from '../prices.js';
 
 const itemBody = z.object({
   name: z.string().trim().min(1).max(120),
@@ -21,7 +23,7 @@ const createBody = itemBody.extend({
 const columns = ['name', 'category_id', 'default_unit', 'notes', 'ean', 'preferred_store_id'];
 
 /** Load items with their category name and a `prices` array (one per store). */
-export function loadItems(db, { itemId = null, q = null } = {}) {
+export function loadItems(db, { itemId = null, q = null, ean = null } = {}) {
   const items = db
     .prepare(
       `SELECT i.id, i.name, i.category_id, c.name AS category_name, i.default_unit, i.notes,
@@ -29,9 +31,10 @@ export function loadItems(db, { itemId = null, q = null } = {}) {
          FROM items i JOIN categories c ON c.id = i.category_id
         WHERE (@id IS NULL OR i.id = @id)
           AND (@q IS NULL OR instr(lower(i.name), lower(@q)) > 0)
+          AND (@ean IS NULL OR ltrim(i.ean, '0') = ltrim(@ean, '0'))
         ORDER BY c.sort_order, c.name COLLATE NOCASE, i.name COLLATE NOCASE`,
     )
-    .all({ id: itemId, q });
+    .all({ id: itemId, q, ean });
 
   const prices = db
     .prepare('SELECT item_id, store_id, price_pence, source, updated_at FROM item_prices')
@@ -53,12 +56,6 @@ export default async function itemRoutes(app, { db }) {
   const requireStore = (storeId) => {
     if (!db.prepare('SELECT 1 FROM stores WHERE id = ?').get(storeId)) throw notFound('Store');
   };
-  const upsertPrice = db.prepare(
-    `INSERT INTO item_prices (item_id, store_id, price_pence, source, updated_at)
-     VALUES (?, ?, ?, 'manual', datetime('now'))
-     ON CONFLICT (item_id, store_id) DO UPDATE
-       SET price_pence = excluded.price_pence, source = 'manual', updated_at = datetime('now')`,
-  );
 
   app.get('/', async (request) => {
     const { q } = z.object({ q: z.string().trim().max(120).optional() }).parse(request.query);
@@ -69,6 +66,7 @@ export default async function itemRoutes(app, { db }) {
 
   app.post('/', async (request, reply) => {
     const { prices = [], ...data } = createBody.parse(request.body);
+    if (data.ean) data.ean = normalizeEan(data.ean);
     const itemId = db.transaction(() => {
       const newId = db
         .prepare(
@@ -82,7 +80,7 @@ export default async function itemRoutes(app, { db }) {
           preferred_store_id: null,
           ...data,
         }).lastInsertRowid;
-      for (const price of prices) upsertPrice.run(newId, price.store_id, price.price_pence);
+      for (const price of prices) setManualPrice(db, newId, price.store_id, price.price_pence);
       return newId;
     })();
     return reply.code(201).send(requireItem(itemId));
@@ -91,7 +89,9 @@ export default async function itemRoutes(app, { db }) {
   app.patch('/:id', async (request) => {
     const itemId = id.parse(request.params.id);
     requireItem(itemId);
-    const { sql, values } = setClause(itemBody.partial().parse(request.body), columns);
+    const body = itemBody.partial().parse(request.body);
+    if (body.ean) body.ean = normalizeEan(body.ean);
+    const { sql, values } = setClause(body, columns);
     if (sql) db.prepare(`UPDATE items SET ${sql} WHERE id = ?`).run(...values, itemId);
     return requireItem(itemId);
   });
@@ -111,7 +111,7 @@ export default async function itemRoutes(app, { db }) {
     const { price_pence } = z.object({ price_pence: pence }).parse(request.body);
     requireItem(itemId);
     requireStore(storeId);
-    upsertPrice.run(itemId, storeId, price_pence);
+    setManualPrice(db, itemId, storeId, price_pence);
     return requireItem(itemId);
   });
 
