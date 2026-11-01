@@ -1,12 +1,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, formatPence, toPence } from '../api.js';
+import ScanSheet from '../components/ScanSheet.vue';
 
 const emit = defineEmits(['navigate']);
 
 const list = ref(null);
 const catalogue = ref([]);
 const stores = ref([]);
+const categories = ref([]);
+const scanning = ref(false);
 const search = ref('');
 const error = ref('');
 const editingBudget = ref(false);
@@ -24,7 +27,11 @@ async function load() {
 
 async function loadCatalogue() {
   try {
-    [catalogue.value, stores.value] = await Promise.all([api.get('/items'), api.get('/stores')]);
+    [catalogue.value, stores.value, categories.value] = await Promise.all([
+      api.get('/items'),
+      api.get('/stores'),
+      api.get('/categories'),
+    ]);
   } catch (err) {
     error.value = err.message;
   }
@@ -128,7 +135,7 @@ async function finish() {
 // Pick up changes made on the other phone. Skipped while the tab is hidden or
 // while editing, so the poll never interrupts typing.
 const refreshWhenVisible = () => {
-  if (document.visibilityState === 'visible' && !editingBudget.value && search.value === '') load();
+  if (document.visibilityState === 'visible' && !editingBudget.value && !scanning.value && search.value === '') load();
 };
 const refreshCatalogue = () => {
   if (document.visibilityState === 'visible') loadCatalogue();
@@ -204,13 +211,16 @@ onUnmounted(() => {
     </section>
 
     <section class="adder">
-      <input
-        v-model="search"
-        type="search"
-        placeholder="Add an item…"
-        aria-label="Search items to add"
-        autocomplete="off"
-      />
+      <div class="adder-row">
+        <input
+          v-model="search"
+          type="search"
+          placeholder="Add an item…"
+          aria-label="Search items to add"
+          autocomplete="off"
+        />
+        <button class="primary" @click="scanning = true">Scan</button>
+      </div>
       <ul v-if="search.trim()" class="matches">
         <li v-for="item in matches" :key="item.id">
           <button @click="add(item)">
@@ -277,6 +287,16 @@ onUnmounted(() => {
     <button v-if="list.items.length > 0" class="primary finish" @click="finish">Finish this shop</button>
   </template>
   <p v-else-if="!error" class="muted">Loading…</p>
+
+  <ScanSheet
+    v-if="scanning && list"
+    :list="list"
+    :stores="stores"
+    :categories="categories"
+    :items="catalogue"
+    @updated="list = $event"
+    @close="scanning = false; loadCatalogue()"
+  />
 </template>
 
 <style scoped>
@@ -338,6 +358,10 @@ onUnmounted(() => {
 .adder {
   position: relative;
   margin-bottom: 0.75rem;
+}
+.adder-row {
+  display: flex;
+  gap: 0.5rem;
 }
 .matches {
   list-style: none;

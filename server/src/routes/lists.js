@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { HttpError, id, notFound, pence, userOf } from '../http.js';
+import { currentPrice, setManualPrice } from '../prices.js';
 
 const today = () =>
   new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }).format(
@@ -84,14 +85,6 @@ export default async function listRoutes(app, { db }) {
     if (list.status !== 'active') throw new HttpError(409, 'This list is already completed');
     return list;
   };
-  const currentPrice = (itemId, storeId) =>
-    storeId == null
-      ? null
-      : (db
-          .prepare('SELECT price_pence FROM item_prices WHERE item_id = ? AND store_id = ?')
-          .pluck()
-          .get(itemId, storeId) ?? null);
-
   // The weekly list people are shopping from. Created on first use, and again
   // after one is completed, carrying the previous budget forward.
   app.get('/current', async () => {
@@ -198,7 +191,7 @@ export default async function listRoutes(app, { db }) {
     let paid = current.price_paid_pence;
     if (!checked) paid = null;
     else if (data.price_paid_pence !== undefined) paid = data.price_paid_pence;
-    else if (current.checked === 0 || storeId !== current.store_id) paid = currentPrice(current.item_id, storeId);
+    else if (current.checked === 0 || storeId !== current.store_id) paid = currentPrice(db, current.item_id, storeId);
 
     db.prepare(
       'UPDATE list_items SET quantity = ?, store_id = ?, checked = ?, price_paid_pence = ? WHERE id = ?',
@@ -215,6 +208,88 @@ export default async function listRoutes(app, { db }) {
       .run(listItemId, listId);
     if (changes === 0) throw notFound('List item');
     return loadList(db, listId);
+  });
+
+  // Scanning an item's barcode means "I have just put this in my basket": it is
+  // added to the list if it was not there, and ticked with the price at the
+  // store you are in. Scanning a ticked item again counts another one.
+  // `price_pence` records the shelf price you read, for that store, first.
+  app.post('/:id/scan', async (request) => {
+    const listId = id.parse(request.params.id);
+    requireActive(listId);
+    const data = z
+      .object({
+        item_id: id,
+        store_id: id.nullable().optional(),
+        price_pence: pence.optional(),
+      })
+      .parse(request.body);
+
+    const item = db.prepare('SELECT id, name, preferred_store_id FROM items WHERE id = ?').get(data.item_id);
+    if (!item) throw notFound('Item');
+    const existing = db
+      .prepare('SELECT * FROM list_items WHERE list_id = ? AND item_id = ?')
+      .get(listId, item.id);
+
+    // The store you scanned at; otherwise wherever the item was already
+    // planned for, its usual store, or the cheapest one.
+    let storeId = data.store_id;
+    if (storeId === undefined) {
+      storeId =
+        existing?.store_id ??
+        item.preferred_store_id ??
+        db
+          .prepare('SELECT store_id FROM item_prices WHERE item_id = ? ORDER BY price_pence, store_id LIMIT 1')
+          .pluck()
+          .get(item.id) ??
+        null;
+    }
+    if (storeId != null && !db.prepare('SELECT 1 FROM stores WHERE id = ?').get(storeId)) {
+      throw notFound('Store');
+    }
+    if (data.price_pence !== undefined && storeId == null) {
+      throw new HttpError(400, 'A price needs a store');
+    }
+
+    let status;
+    db.transaction(() => {
+      if (data.price_pence !== undefined) setManualPrice(db, item.id, storeId, data.price_pence);
+      const price = currentPrice(db, item.id, storeId);
+      if (!existing) {
+        db.prepare(
+          `INSERT INTO list_items (list_id, item_id, store_id, quantity, checked, price_paid_pence, added_by)
+           VALUES (?, ?, ?, 1, 1, ?, ?)`,
+        ).run(listId, item.id, storeId, price, userOf(request));
+        status = 'ticked';
+      } else if (!existing.checked) {
+        db.prepare('UPDATE list_items SET store_id = ?, checked = 1, price_paid_pence = ? WHERE id = ?').run(
+          storeId,
+          price,
+          existing.id,
+        );
+        status = 'ticked';
+      } else {
+        db.prepare(
+          'UPDATE list_items SET quantity = MIN(99, quantity + 1), price_paid_pence = COALESCE(price_paid_pence, ?) WHERE id = ?',
+        ).run(price, existing.id);
+        status = 'again';
+      }
+    })();
+
+    const list = loadList(db, listId);
+    const row = list.items.find((i) => i.item_id === item.id);
+    return {
+      list,
+      scanned: {
+        list_item_id: row.id,
+        name: item.name,
+        status,
+        quantity: row.quantity,
+        store_id: row.store_id,
+        store_name: row.store_name,
+        unit_price_pence: row.unit_price_pence,
+      },
+    };
   });
 
   // Finish the shop. The next GET /current starts a fresh list.

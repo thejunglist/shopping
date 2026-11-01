@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync';
+import { normalizeEan } from './barcode.js';
 import { parsePence } from './money.js';
 
 /**
@@ -58,7 +59,7 @@ export function importCsv(db, text, { dryRun = false } = {}) {
     const categoryName = row.category ?? '';
     const storeName = row.store ?? '';
     const unit = row.unit || null;
-    const ean = row.ean || null;
+    const ean = row.ean ? normalizeEan(row.ean) : null;
     const priceText = row.price ?? '';
 
     if (!name) throw new Error('missing name');
