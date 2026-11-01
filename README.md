@@ -2,7 +2,7 @@
 
 A phone-first weekly shopping list for two people. It keeps a catalogue of items with a price per store, sorts the list by category, tracks a running total against a weekly budget, and records what you spent. It runs on a home server (Proxmox LXC) and is reachable only over [Tailscale](https://tailscale.com).
 
-> **Status: Phase 1.** The catalogue, per-store prices, weekly list with running total and weekly budget, and CSV import all work. Spending history, recurring suggestions and saved lists are next.
+> **Status: Phase 1, plus barcode scanning.** The catalogue, per-store prices, weekly list with running total and weekly budget, CSV import and a camera barcode scanner all work. Spending history, recurring suggestions and saved lists are next.
 
 ## Stack
 
@@ -51,9 +51,30 @@ That is also why the server listens on `127.0.0.1` only: if it were reachable di
 
 - **List:** search to add items (each goes to its cheapest or usual store), tick them off as you shop, and watch the total against your weekly budget. Pick a different store on a row if an item is priced at several. "Finish this shop" files the week and starts a new list with the same budget. Ticking records the price at that moment, so history stays right when prices change.
 - **Items:** your catalogue, with a price per shop.
+- **Scan:** the Scan button on the List screen opens the camera. Choose the shop you are in at the top, then point at a barcode. An item you already have is ticked at that shop's price; if it has no price there yet, you are asked for the shelf price once. A new barcode is looked up for a name, size and a category guess (you check it before saving). A barcode can also be typed in.
 - **Manage:** your shops and categories. Their order sets the order of the list, so arrange categories like the aisles you walk.
 
 To load your starting catalogue from a spreadsheet, see [docs/import-format.md](docs/import-format.md).
+
+## Scanning
+
+The scanner reads EAN-13, EAN-8 and UPC-A barcodes, which covers UK groceries. Chrome on Android has a built-in reader; iPhone Safari does not, so the app bundles a small WebAssembly reader (ZXing) and serves it itself, with nothing loaded from a public CDN. The check digit is verified, so a misread cannot tick the wrong item.
+
+- **Needs HTTPS.** Browsers only allow the camera on a secure address, so open the app through your `https://shopping.<tailnet>.ts.net` address. Over plain `http://` or an IP address the scanner explains this and offers typed entry.
+- **Names come from [Open Food Facts](https://world.openfoodfacts.org/).** Only the barcode number is sent, only for barcodes you have not saved yet, and the server makes the request (your phone never contacts them). The answer is cached for a day. If they cannot be reached you type the name instead. Their documented limit is 15 product lookups per minute per IP address, far more than scanning by hand reaches. Product data is under the Open Database Licence.
+- **Prices are always typed by you.** A barcode identifies a product but never carries its price.
+- **Optional settings** (environment variables for the service). Set a contact so Open Food Facts can reach you if your app misbehaves; by default none is sent. On the server:
+
+  ```sh
+  sudo systemctl edit shopping
+  # add these two lines in the editor, then save:
+  #   [Service]
+  #   Environment=OFF_CONTACT=you@example.com
+  sudo systemctl restart shopping
+  ```
+
+  The override lives in its own file, so deploys and `setup.sh` do not remove it. `OFF_PRODUCT_URL` changes the lookup address (it must contain `{ean}`): their documentation lists API v2, which the app uses by default, as deprecated in favour of v3, and the app reads either response format. If lookups ever stop working, try `https://world.openfoodfacts.org/api/v3/product/{ean}`.
+- **Updating the reader:** `barcode-detector` and `zxing-wasm` in `web/package.json` must be the same generation (the WebAssembly file has to match the code that loads it). Dependabot is set to update them together in one pull request.
 
 ## API
 

@@ -90,11 +90,13 @@ sudo -iu runner
 mkdir actions-runner && cd actions-runner
 # ...download and extract as shown by GitHub...
 ./config.sh --url https://github.com/<you>/<repo> --token <TOKEN> --labels shopping
-exit
+exit          # back to root (or your admin user); `runner` has no sudo rights
 cd /home/runner/actions-runner
-sudo ./svc.sh install runner
+sudo ./svc.sh install runner     # run as root/admin: `runner` here is the user the service runs as
 sudo ./svc.sh start
 ```
+
+Installing the service writes a systemd unit, which needs root, so these last three commands must **not** be run as `runner`. If you see `Sorry, user runner is not allowed to execute './svc.sh install runner' as root`, you are still logged in as `runner`: type `exit` (or open a root shell with `pct enter <id>` on the Proxmox host) and run them again. Do not give `runner` general sudo to get around it; the narrow sudo rule in `deploy/sudoers-shopping-deploy` is deliberate.
 
 The runner makes outbound connections only; nothing is exposed.
 
@@ -158,7 +160,10 @@ Two layers, plus one you should add:
 | Symptom | Likely cause |
 | --- | --- |
 | Deploy job queued forever | Runner offline, or its label is not `shopping` |
+| `user runner is not allowed to execute './svc.sh install runner' as root` | You ran the service install while logged in as `runner`; run it as root or your admin user (see step 4) |
 | `sudo: a password is required` in the deploy log | `deploy/setup.sh` has not been run (or not re-run after changing the sudoers file) |
+| Health check fails; the log mentions `status=200/CHDIR` or `Permission denied` for `/opt/shopping/...` | The release directory is not readable by the `shopping` user (fixed in `bundle.sh`/`deploy.sh`; for an old release run `chmod 755 /opt/shopping/releases/*`) |
+| `/opt/shopping/current` is a link to itself ("Too many levels of symbolic links") | A failed first deploy on an older `deploy.sh`; run `rm /opt/shopping/current` and deploy again |
 | Health check fails and the log shows a migration error | A new `.sql` file is invalid; the deploy rolled back. Fix it and push again |
 | Health check fails, no obvious error | `journalctl -u shopping -n 50`; the failed release is kept in `/opt/shopping/releases/` for inspection |
 | Site works over HTTP on the tailnet but not HTTPS | HTTPS certificates not enabled in the Tailscale admin console |

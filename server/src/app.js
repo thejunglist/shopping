@@ -4,8 +4,10 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { ZodError } from 'zod';
 import { currentSchema } from './migrate.js';
+import { lookupOpenFoodFacts } from './barcode.js';
 import { userOf } from './http.js';
 import resourceRoutes from './routes/resources.js';
+import barcodeRoutes from './routes/barcode.js';
 import itemRoutes from './routes/items.js';
 import listRoutes from './routes/lists.js';
 
@@ -13,7 +15,14 @@ import listRoutes from './routes/lists.js';
  * Build the Fastify app. Kept separate from index.js so tests can create an
  * app around an in-memory database and call it with `app.inject()`.
  */
-export async function buildApp({ db, version = 'dev', webRoot = null, logger = false } = {}) {
+export async function buildApp({
+  db,
+  version = 'dev',
+  webRoot = null,
+  logger = false,
+  // Replaceable so tests never touch the network.
+  lookupProduct = lookupOpenFoodFacts,
+} = {}) {
   const app = Fastify({ logger });
 
   // Every error leaves as JSON: { error: "message" }.
@@ -57,6 +66,7 @@ export async function buildApp({ db, version = 'dev', webRoot = null, logger = f
   await app.register(resourceRoutes, { prefix: '/api/stores', db, table: 'stores', label: 'Store' });
   await app.register(itemRoutes, { prefix: '/api/items', db });
   await app.register(listRoutes, { prefix: '/api/lists', db });
+  await app.register(barcodeRoutes, { prefix: '/api/barcode', db, lookupProduct });
 
   if (webRoot && existsSync(join(webRoot, 'index.html'))) {
     await app.register(fastifyStatic, { root: webRoot });
