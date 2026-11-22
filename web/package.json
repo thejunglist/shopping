@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "barcode-detector": "^3.2.3",
+    "barcode-detector": "^3.2.4",
     "vue": "^3.5.44",
-    "zxing-wasm": "3.1.6"
+    "zxing-wasm": "3.1.7"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
